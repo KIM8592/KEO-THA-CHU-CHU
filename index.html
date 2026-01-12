@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Kéo Chữ - 2x2 Layout</title>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style>
+        :root { --primary: #007bff; --success: #28a745; --danger: #dc3545; --orange: #fd7e14; }
+        body { font-family: 'Segoe UI', sans-serif; background: #eef2f5; margin: 0; padding: 10px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 600px; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box; }
+        .hidden { display: none !important; }
+        h2 { text-align: center; color: var(--primary); font-size: 1.5rem; }
+        
+        input, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 12px; border: 1px solid #ddd; font-size: 16px; box-sizing: border-box; }
+        button { cursor: pointer; border: none; font-weight: bold; transition: 0.3s; }
+        .btn-blue { background: var(--primary); color: white; }
+        .btn-green { background: var(--success); color: white; }
+        .set-item { padding: 15px; background: #fff; border: 1px solid #eee; border-radius: 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-left: 6px solid var(--primary); font-weight: bold; }
+
+        /* Vùng chứa chữ cần kéo */
+        .bank { display: flex; justify-content: center; padding: 40px 20px; background: #e3f2fd; border: 3px dashed var(--primary); border-radius: 20px; margin-bottom: 25px; }
+        .drag-item { padding: 15px 35px; background: var(--primary); color: white; border-radius: 50px; cursor: grab; font-weight: bold; font-size: 22px; box-shadow: 0 6px 0 #0056b3; touch-action: none; }
+        
+        /* Bố cục lưới 2 trên - 2 dưới */
+        .grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; /* Chia làm 2 cột */
+            gap: 15px; 
+            margin-top: 20px; 
+        }
+        .slot { 
+            min-height: 80px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            border: 3px dashed #b0bec5; 
+            border-radius: 15px; 
+            text-align: center; 
+            background: #fafafa; 
+            font-size: 18px; 
+            font-weight: bold; 
+            padding: 10px;
+            box-sizing: border-box;
+            transition: all 0.2s;
+        }
+        .slot.correct { background: var(--success) !important; color: white; border-style: solid; border-color: #1e7e34; transform: scale(1.05); }
+        .shake { animation: shake 0.5s; background: #ffebee !important; border-color: var(--danger) !important; }
+        @keyframes shake { 0%, 100% {transform: translateX(0);} 25% {transform: translateX(-8px);} 75% {transform: translateX(8px);} }
+
+        /* Modal */
+        #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: none; z-index: 100; }
+        #modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 25px; display: none; z-index: 101; text-align: center; width: 85%; max-width: 350px; }
+
+        /* Mobile tối ưu */
+        @media (max-width: 480px) {
+            .drag-item { font-size: 18px; padding: 12px 25px; }
+            .slot { font-size: 16px; min-height: 70px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container" id="main-menu">
+    <h2>🎮 KÉO CHỮ THÔNG MINH</h2>
+    <div id="status" style="text-align:center; font-weight:bold; margin-bottom:15px; font-size: 0.9rem;">Kết nối Cloud...</div>
+    <div id="set-list">Đang tải dữ liệu...</div>
+    <hr>
+    <button class="btn-blue" onclick="showAdmin()">➕ TẠO BỘ BÀI TẬP MỚI</button>
+</div>
+
+<div class="container hidden" id="admin-view">
+    <button onclick="showMenu()" style="width: auto; background: #6c757d; color: white;">⬅ Quay lại</button>
+    <h3>Thiết lập bài học</h3>
+    <input type="text" id="set-name" placeholder="Tên bộ (VD: Unit 1)">
+    <div style="background: #f9f9f9; padding: 15px; border-radius: 15px; border: 1px solid #ddd;">
+        <label><b>Chữ cần kéo:</b></label>
+        <input type="text" id="t-drag" placeholder="VD: Apple">
+        <label><b>Đáp án đúng:</b></label>
+        <input type="text" id="t-ans" placeholder="VD: Quả táo">
+        <label><b>3 đáp án sai:</b></label>
+        <input type="text" id="t-wrong" placeholder="Cam, Chuối, Lê">
+        <button class="btn-blue" onclick="addQuestion()">➕ THÊM CÂU HỎI</button>
+    </div>
+    <div id="temp-info" style="text-align:center; margin:10px; color:var(--orange); font-weight:bold;"></div>
+    <button class="btn-green" id="btn-save" onclick="saveToCloud()">💾 LƯU LÊN CLOUD</button>
+</div>
+
+<div class="container hidden" id="game-view">
+    <div id="game-info" style="text-align:center; font-weight:bold; color:var(--primary); margin-bottom:15px;"></div>
+    <div class="bank" id="bank"></div>
+    <div class="grid" id="grid"></div>
+    <button onclick="location.reload()" style="background:#6c757d; color:white; margin-top:25px;">🏠 Thoát</button>
+</div>
+
+<div id="overlay"></div>
+<div id="modal">
+    <h2 id="m-title"></h2>
+    <p id="m-text"></p>
+    <div id="m-foot"></div>
+</div>
+
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyCWwXbgWOZTifn-pRM57HZ2RiqHjWZ6DgE",
+        authDomain: "gamekeotha.firebaseapp.com",
+        databaseURL: "https://gamekeotha-default-rtdb.firebaseio.com",
+        projectId: "gamekeotha",
+        storageBucket: "gamekeotha.firebasestorage.app",
+        messagingSenderId: "294617757747",
+        appId: "1:294617757747:web:b1592f8fb6743ea3f88b46"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let allSets = {}; let tempQuestions = []; let currentQuestions = []; let currentIdx = 0;
+
+    db.ref(".info/connected").on("value", (snap) => {
+        const s = document.getElementById('status');
+        if (snap.val() === true) { s.innerText = "● CLOUD SẴN SÀNG"; s.style.color = "green"; }
+        else { s.innerText = "○ ĐANG KẾT NỐI..."; s.style.color = "red"; }
+    });
+
+    db.ref('text_drag_sets').on('value', (snap) => {
+        allSets = snap.val() || {};
+        renderList();
+    });
+
+    function renderList() {
+        const list = document.getElementById('set-list'); list.innerHTML = "";
+        for (let key in allSets) {
+            const div = document.createElement('div'); div.className = 'set-item';
+            div.innerHTML = `<span>📂 ${allSets[key].name}</span>
+                             <div style="display:flex; gap:8px;">
+                                <button onclick="playGame('${key}')" style="background:var(--success); color:white; width:65px; padding:8px;">CHƠI</button>
+                                <button onclick="deleteSet('${key}')" style="background:var(--danger); color:white; width:50px; padding:8px;">Xóa</button>
+                             </div>`;
+            list.appendChild(div);
+        }
+    }
+
+    function addQuestion() {
+        const drag = document.getElementById('t-drag').value.trim();
+        const ans = document.getElementById('t-ans').value.trim();
+        const wrong = document.getElementById('t-wrong').value.split(',').map(s => s.trim()).filter(s => s);
+        if(!drag || !ans) return alert("Thiếu thông tin!");
+        tempQuestions.push({ drag, ans, wrongs: wrong });
+        document.getElementById('temp-info').innerText = `Đã thêm ${tempQuestions.length} câu.`;
+        document.getElementById('t-drag').value = ""; document.getElementById('t-ans').value = ""; document.getElementById('t-wrong').value = "";
+    }
+
+    function saveToCloud() {
+        const name = document.getElementById('set-name').value.trim();
+        if(!name || !tempQuestions.length) return alert("Nhập tên bộ!");
+        db.ref('text_drag_sets').push({ name, questions: tempQuestions }).then(() => {
+            tempQuestions = []; document.getElementById('temp-info').innerText = ""; showMenu();
+        });
+    }
+
+    function deleteSet(key) { if(confirm("Xóa bộ này?")) db.ref('text_drag_sets/' + key).remove(); }
+
+    function playGame(key) {
+        currentQuestions = allSets[key].questions; currentIdx = 0;
+        document.getElementById('main-menu').classList.add('hidden');
+        document.getElementById('game-view').classList.remove('hidden');
+        loadQuestion();
+    }
+
+    function loadQuestion() {
+        hideModal();
+        const q = currentQuestions[currentIdx];
+        document.getElementById('game-info').innerText = `CÂU ${currentIdx + 1} / ${currentQuestions.length}`;
+        const bank = document.getElementById('bank'); const grid = document.getElementById('grid');
+        bank.innerHTML = ""; grid.innerHTML = "";
+
+        const d = document.createElement('div'); d.className = 'drag-item'; d.innerText = q.drag;
+        d.draggable = true; d.ondragstart = (e) => e.dataTransfer.setData("text", q.drag);
+        bank.appendChild(d);
+
+        let options = [q.ans, ...q.wrongs].sort(() => Math.random() - 0.5);
+        options.forEach(opt => {
+            const s = document.createElement('div'); s.className = 'slot'; s.innerText = opt;
+            s.ondragover = (e) => e.preventDefault();
+            s.ondrop = (e) => {
+                if (opt === q.ans) {
+                    s.classList.add('correct'); s.innerText = "✅ " + opt; showResult(true);
+                } else {
+                    s.classList.add('shake'); setTimeout(() => s.classList.remove('shake'), 1000); showResult(false);
+                }
+            };
+            grid.appendChild(s);
+        });
+    }
+
+    function showResult(isCorrect) {
+        if(!isCorrect) {
+            const m = document.getElementById('modal'); const o = document.getElementById('overlay');
+            document.getElementById('m-title').innerText = "SAI RỒI! ❌";
+            document.getElementById('m-title').style.color = "red";
+            document.getElementById('m-text').innerText = "Thử lại nào!";
+            document.getElementById('m-foot').innerHTML = "";
+            m.style.display = o.style.display = 'block';
+            setTimeout(hideModal, 1000); return;
+        }
+        const isEnd = (currentIdx === currentQuestions.length - 1);
+        const m = document.getElementById('modal'); const o = document.getElementById('overlay');
+        document.getElementById('m-title').innerText = isEnd ? "XONG RỒI! 🏆" : "ĐÚNG RỒI! 🎉";
+        document.getElementById('m-title').style.color = "green";
+        document.getElementById('m-text').innerText = isEnd ? "Bạn đã hoàn thành bài tập!" : "Tuyệt vời, tiếp theo nào!";
+        document.getElementById('m-foot').innerHTML = `<button onclick="${isEnd ? 'location.reload()' : 'nextQuestion()'}" class="btn-green">${isEnd ? 'KẾT THÚC' : 'TIẾP THEO'}</button>`;
+        m.style.display = o.style.display = 'block';
+    }
+
+    function nextQuestion() { currentIdx++; loadQuestion(); }
+    function hideModal() { document.getElementById('overlay').style.display = 'none'; document.getElementById('modal').style.display = 'none'; }
+    function showAdmin() { document.getElementById('main-menu').classList.add('hidden'); document.getElementById('admin-view').classList.remove('hidden'); }
+    function showMenu() { document.getElementById('admin-view').classList.add('hidden'); document.getElementById('main-menu').classList.remove('hidden'); }
+</script>
+</body>
+</html>
